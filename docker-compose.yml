@@ -1,0 +1,14 @@
+services:
+  gcp_mcp_server:
+    build: .
+    ports:
+      - "8048:8048"
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    networks:
+      - pydantic-ai-multi-agent-hr-agent_app_network_pyd
+
+networks:
+  pydantic-ai-multi-agent-hr-agent_app_network_pyd:
+    external: true
