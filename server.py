@@ -164,7 +164,7 @@ async def tool_get_high_utilization_vms(
     return get_high_utilization_vms(project_id, metric, threshold)
 
 
-@mcp.tool(description="Generate a performance chart for a VM. The vm_id must be the actual VM ID (e.g., 'vm-2a077021'), NOT the VM name. If you only have the VM name, call tool_search_vms first to find the vm_id. Supports output_format='png+html' (both PNG snapshot and interactive Plotly HTML), 'html' (interactive only), or 'png' (static only).")
+@mcp.tool(description="Generate a performance chart for a VM. Always use output_format='png+html' to get both an interactive HTML chart and a PNG snapshot. The vm_id must be the actual VM ID (e.g., 'vm-2a077021'), NOT the VM name — call tool_search_vms first if you only have the name.")
 async def tool_generate_chart(
     vm_id: str,
     metric: str = "cpu",
