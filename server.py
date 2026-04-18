@@ -18,9 +18,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create FastMCP server instance
+# Server versioning
+SERVER_VERSION = "1.0.0"
+V2_VERSION = "2.0.0"
+
+# Create FastMCP server instance (V1)
 mcp = FastMCP(
     name="GCP Compute MCP Server",
+    version=SERVER_VERSION,
     instructions=(
         "This server provides access to a GCP Compute Engine environment with "
         "5 projects, 111 VMs, 24-hour performance metrics, and 7-day event logs. "
@@ -418,17 +423,71 @@ def prompt_vm_health_report(
 
 
 # =============================================================================
-# Run Server
+# V2 Server — mounts V1 tools + adds tool_compare_projects (V2-exclusive)
+# =============================================================================
+
+# V2 mounts V1 (inherits all tools) + adds one new tool
+mcp_v2 = FastMCP(
+    name="GCP Compute MCP Server",
+    version=V2_VERSION,
+    instructions=mcp.instructions,
+)
+
+# Mount V1 into V2 so all V1 tools are available
+mcp_v2.mount(mcp)
+
+# V2-exclusive tool — compare health across ALL projects in one call
+@mcp_v2.tool(description="Compare health across all GCP projects side by side — VM counts, avg CPU, avg memory, running vs stopped. V2-exclusive tool not available in V1.")
+async def tool_compare_projects(ctx: Context = None) -> dict:
+    """Cross-project health comparison — V2 only."""
+    projects = list_projects()
+    comparison = []
+    for p in projects:
+        health = get_project_health(p["project_id"])
+        comparison.append({
+            "project_id": p["project_id"],
+            "name": p.get("name", ""),
+            "total_vms": health.get("total_vms", 0),
+            "running": health.get("running_vms", 0),
+            "avg_cpu": health.get("avg_cpu_percent", 0),
+            "avg_memory": health.get("avg_memory_percent", 0),
+            "health": health.get("overall_health", "unknown"),
+        })
+    return {"projects": comparison, "total_projects": len(comparison)}
+
+
+# =============================================================================
+# Run Server — dual versioned on same port
 # =============================================================================
 
 if __name__ == "__main__":
-    logger.info("Starting GCP Compute MCP Server...")
-    logger.info("Endpoint: http://0.0.0.0:8048/mcp")
-    logger.info("Data: 5 projects, 111 VMs, 24h metrics, 7d logs")
-    logger.info("All data is deterministic (seed=42)")
+    import uvicorn
+    from contextlib import asynccontextmanager
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
 
-    mcp.run(
-        transport="streamable-http",
-        host="0.0.0.0",
-        port=8048
+    port = 8048
+    logger.info("Starting dual-version GCP Compute MCP Server on port %s", port)
+    logger.info("  V1 (%s): http://0.0.0.0:%s/v1/mcp  — 15 tools", SERVER_VERSION, port)
+    logger.info("  V2 (%s): http://0.0.0.0:%s/v2/mcp  — 16 tools (+ tool_get_project_health)", V2_VERSION, port)
+    logger.info("  Default: http://0.0.0.0:%s/mcp     — V1", port)
+
+    v1_app = mcp.http_app(transport="streamable-http")
+    v2_app = mcp_v2.http_app(transport="streamable-http")
+
+    @asynccontextmanager
+    async def combined_lifespan(app):
+        async with v1_app.router.lifespan_context(app):
+            async with v2_app.router.lifespan_context(app):
+                yield {}
+
+    app = Starlette(
+        routes=[
+            Mount("/v1", app=v1_app),
+            Mount("/v2", app=v2_app),
+            Mount("/", app=v1_app),
+        ],
+        lifespan=combined_lifespan,
     )
+
+    uvicorn.run(app, host="0.0.0.0", port=port)
