@@ -48,25 +48,46 @@ wastes turns and does not help.
 ## Synthesis program (after tools return)
 
 The synthesis program MUST inline the function below at the top of the
-`code` argument, then call it. Tail of the program is exactly:
+`code` argument, then call it. Tail of the program is **exactly** this
+(no edits, no defensive checks added):
 
 ```python
 comparison = []
 drilldowns = []
 for idx, name, data in iter_tool_results():
-    if name == "tool_compare_projects" and isinstance(data, dict):
+    if name == "tool_compare_projects":
         comparison = primary_records(data)
-    elif name == "tool_get_project_health" and isinstance(data, dict) and "error" not in data:
+    elif name == "tool_get_project_health" and "error" not in data:
         drilldowns.append(data)
 print(render_gcp_triage_report(comparison, drilldowns))
 ```
 
+### Critical rules — do NOT modify the loop
+
+**`data` is already parsed.** The interceptor has already unwrapped
+the MCP `{'type':'text','text':'<json>'}` envelope and called
+`json.loads()`. By the time you see `data`, it is a Python dict (for
+single-result tools like `tool_compare_projects` and
+`tool_get_project_health`). DO NOT add any of these:
+
+  * `isinstance(data, list)` checks — `data` is a dict here, not a list
+  * `data[0]['text']` accessors — there is no text envelope; you'd be
+    reading into the dict's first key, which is wrong
+  * `json.loads(data)` — `data` is not a string
+  * `if data and isinstance(data[0], dict) and "projects" in data[0]:`
+    style defensive walks — they all fail because `data` is the dict
+    already.
+
+Just call `primary_records(data)` and trust it. It returns the
+records list (`tool_compare_projects.projects` here) for any
+list-of-dict-shaped inner field.
+
 **Find tool results by tool name, NOT by index.** Do NOT use
-`tool_data(N)` — when there are many tool results (one per drilled-down
+`tool_data(N)`. When many drilldowns are in scope (one per yellow
 project), picking the right N by reading the `# tool_result_N` comments
-is brittle and frequently wrong. `iter_tool_results()` is the canonical
-walker; filter by `name` to identify each tool's output. This pattern
-is robust whether there are 2 tool results or 20.
+is brittle and the model frequently picks N=0 (1-indexed sandbox →
+KeyError) or the wrong index. `iter_tool_results()` + filter by `name`
+is the canonical pattern — same for any tool count.
 
 The function returns a complete report wrapped in a ` ```text ` fence —
 that is the whole user-facing answer. Do NOT write markdown tables.
