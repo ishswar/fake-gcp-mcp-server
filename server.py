@@ -439,18 +439,31 @@ mcp_v2.mount(mcp)
 # V2-exclusive tool — compare health across ALL projects in one call
 @mcp_v2.tool(description="Compare health across all GCP projects side by side — VM counts, avg CPU, avg memory, running vs stopped. V2-exclusive tool not available in V1.")
 async def tool_compare_projects(ctx: Context = None) -> dict:
-    """Cross-project health comparison — V2 only."""
+    """Cross-project health comparison — V2 only.
+
+    Reads from get_project_health() per project. The keys we extract
+    must match what get_project_health actually returns; previously
+    five of seven keys were misnamed (e.g. total_vms vs vm_summary.total)
+    and the tool emitted zeros for every project. Fixed 2026-04-30.
+    """
     projects = list_projects()
     comparison = []
     for p in projects:
         health = get_project_health(p["project_id"])
+        if "error" in health:
+            # Skip un-resolvable projects rather than emit a row of zeros.
+            continue
+        vm_summary = health.get("vm_summary", {}) or {}
         comparison.append({
             "project_id": p["project_id"],
             "name": p.get("name", ""),
-            "total_vms": health.get("total_vms", 0),
-            "running": health.get("running_vms", 0),
+            "total_vms": vm_summary.get("total", 0),
+            "running": vm_summary.get("running", 0),
+            "stopped": vm_summary.get("stopped", 0),
             "avg_cpu": health.get("avg_cpu_percent", 0),
             "avg_memory": health.get("avg_memory_percent", 0),
+            "high_cpu_count": health.get("high_cpu_count", 0),
+            "error_count": health.get("error_count", 0),
             "health": health.get("overall_health", "unknown"),
         })
     return {"projects": comparison, "total_projects": len(comparison)}

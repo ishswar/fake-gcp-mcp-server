@@ -105,6 +105,39 @@ def get_project_health(project_id: str) -> dict:
                     })
                     break
 
+    # Average CPU / memory across RUNNING VMs.
+    # Use each VM's 24h-average (mean over its time series), then average
+    # across VMs. Using last-data-point instead returns 0 for this dataset
+    # because the generator pads the series tail with zeros.
+    cpu_samples: list[float] = []
+    mem_samples: list[float] = []
+    for vm in vms:
+        if vm.status != "RUNNING":
+            continue
+        perf = PERFORMANCE.get(vm.vm_id)
+        if not perf:
+            continue
+        cpu_vals = [dp.value for dp in (perf.get("cpu") or []) if dp.value is not None]
+        if cpu_vals:
+            cpu_samples.append(sum(cpu_vals) / len(cpu_vals))
+        mem_vals = [dp.value for dp in (perf.get("memory") or []) if dp.value is not None]
+        if mem_vals:
+            mem_samples.append(sum(mem_vals) / len(mem_vals))
+
+    avg_cpu_percent = round(sum(cpu_samples) / len(cpu_samples), 1) if cpu_samples else 0.0
+    avg_memory_percent = round(sum(mem_samples) / len(mem_samples), 1) if mem_samples else 0.0
+
+    # Derived overall_health from alerts + averages.
+    #   red    — high CPU on any VM, OR many ERROR logs, OR avg CPU > 75
+    #   yellow — any alert, OR avg CPU > 50, OR a VM stopped in last 24h
+    #   green  — none of the above
+    if high_cpu_count > 0 or error_count >= 5 or avg_cpu_percent > 75:
+        overall_health = "red"
+    elif alerts or avg_cpu_percent > 50 or recent_stops:
+        overall_health = "yellow"
+    else:
+        overall_health = "green"
+
     return {
         "project_id": project.project_id,
         "project_name": project.name,
@@ -118,7 +151,13 @@ def get_project_health(project_id: str) -> dict:
         "alerts": alerts,
         "high_cpu_count": high_cpu_count,
         "error_count": error_count,
-        "recent_stops": recent_stops
+        "recent_stops": recent_stops,
+        # Aggregate signals — used by tool_compare_projects for cross-project
+        # comparison. Fixed in 2026-04-30: previously these were missing,
+        # leading the comparison tool to report all zeros.
+        "avg_cpu_percent": avg_cpu_percent,
+        "avg_memory_percent": avg_memory_percent,
+        "overall_health": overall_health,
     }
 
 
