@@ -51,16 +51,22 @@ The synthesis program MUST inline the function below at the top of the
 `code` argument, then call it. Tail of the program is exactly:
 
 ```python
-comparison = primary_records(tool_data(N_compare))
+comparison = []
 drilldowns = []
 for idx, name, data in iter_tool_results():
-    if name == "tool_get_project_health" and isinstance(data, dict) and "error" not in data:
+    if name == "tool_compare_projects" and isinstance(data, dict):
+        comparison = primary_records(data)
+    elif name == "tool_get_project_health" and isinstance(data, dict) and "error" not in data:
         drilldowns.append(data)
 print(render_gcp_triage_report(comparison, drilldowns))
 ```
 
-Where `N_compare` is the index of the `tool_compare_projects` result
-(read the `# tool_result_N: <tool_name>` comments to find it).
+**Find tool results by tool name, NOT by index.** Do NOT use
+`tool_data(N)` — when there are many tool results (one per drilled-down
+project), picking the right N by reading the `# tool_result_N` comments
+is brittle and frequently wrong. `iter_tool_results()` is the canonical
+walker; filter by `name` to identify each tool's output. This pattern
+is robust whether there are 2 tool results or 20.
 
 The function returns a complete report wrapped in a ` ```text ` fence —
 that is the whole user-facing answer. Do NOT write markdown tables.
