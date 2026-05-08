@@ -17,6 +17,15 @@ SEED = 42
 # Anchor timestamp - all times relative to this
 ANCHOR_TIME = datetime(2026, 3, 10, 12, 0, 0)  # Used for static data (projects, VMs, logs)
 
+# VMs that bypass the random sinusoidal generator and emit a fixed,
+# extreme pattern — used by the AI Agent's vision-passthrough functional
+# test. The test renders a chart, lets the agent's first LLM read the
+# image, and asserts that the synthesis-turn reply still carries
+# vision-derived numbers (e.g. "120%", "peak", "above 80%").
+# The shape is intentionally outside normal bounds so the LLM's
+# narrative is invariant across phrasings.
+TEST_VISION_VM_IDS = {"vm-5125227c"}  # db-replica-prod-03 in Alpha Platform
+
 
 # =============================================================================
 # Data Models
@@ -412,11 +421,43 @@ def generate_vms_for_project(project: Project, users: list[User], vm_count: int)
     return vms
 
 
+def _generate_vision_test_pattern(vm: VM) -> dict:
+    """
+    Deterministic CPU tent (0->120->0) + memory flat (~92%) for vision-passthrough tests.
+
+    288 5-min points over the last 24 hours. The CPU tent peaks at 120% at hour 12;
+    memory sits at ~92% with tiny wobble. Used by functional test T44 — assertions
+    look for any of [120, peak, above 100, above 80, near 90] in the agent's
+    final reply, which proves the chart-vision narrative survived the synthesis turn.
+    """
+    data = {"cpu": [], "memory": [], "disk": []}
+    now = datetime.now()
+    for i in range(288):
+        ts = now - timedelta(hours=24) + timedelta(minutes=i * 5)
+        timestamp = iso_timestamp(ts)
+        # CPU tent: 0 at i=0, 120 at i=144 (hour 12), back to ~0 at i=287
+        if i <= 144:
+            cpu_value = (i / 144.0) * 120.0
+        else:
+            cpu_value = ((287 - i) / 143.0) * 120.0
+        # Memory: flat 92% with tiny sinusoidal wobble — never below 80%
+        mem_value = 92.0 + 2.0 * math.sin(2 * math.pi * i / 288)
+        # Disk: flat 50% (irrelevant for the vision test)
+        disk_value = 50.0
+        data["cpu"].append(DataPoint(timestamp=timestamp, value=round(cpu_value, 2)))
+        data["memory"].append(DataPoint(timestamp=timestamp, value=round(mem_value, 2)))
+        data["disk"].append(DataPoint(timestamp=timestamp, value=round(disk_value, 2)))
+    return data
+
+
 def generate_performance_data(vm: VM) -> dict:
     """
     Generate 288 data points (5-min intervals, 24 hours) for CPU, memory, disk.
     Returns dict with keys: "cpu", "memory", "disk", each containing list of DataPoint.
     """
+    if vm.vm_id in TEST_VISION_VM_IDS:
+        return _generate_vision_test_pattern(vm)
+
     data = {"cpu": [], "memory": [], "disk": []}
 
     # Per-VM random base values for memory and disk
