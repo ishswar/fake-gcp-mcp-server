@@ -10,6 +10,20 @@ import logging
 import base64
 import io
 from fastmcp import FastMCP, Context
+from mcp.types import ToolAnnotations
+
+
+# All tools in this server are read-only data fetchers — they call the
+# (simulated) GCP API to list/get/search resources. None of them mutate
+# platform state. Declared once and reused via the @mcp.tool() decorator
+# so TESSA's read-only mode filter recognises them as safe to expose.
+# If a future tool DOES mutate state (e.g. tool_reboot_vm), it needs its
+# OWN annotation with readOnlyHint=False — do not blanket-apply this.
+_READ_ONLY = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    openWorldHint=True,  # calls out to GCP (mocked, but semantically external)
+)
 
 # Configure logging
 logging.basicConfig(
@@ -51,42 +65,60 @@ from tools.logs import get_vm_logs, get_recent_events
 from tools.aggregates import get_project_health, get_high_utilization_vms
 
 
-@mcp.tool(description="List all GCP projects in this environment with summary info.")
+@mcp.tool(
+    description="List all GCP projects in this environment with summary info.",
+    annotations=_READ_ONLY,
+)
 async def tool_list_projects(ctx: Context) -> dict:
     """List all GCP projects with summary info including VM counts."""
     logger.info("Listing all projects")
     return {"projects": list_projects()}
 
 
-@mcp.tool(description="Get detailed information about a specific GCP project. Supports partial matching on project_id or name.")
+@mcp.tool(
+    description="Get detailed information about a specific GCP project. Supports partial matching on project_id or name.",
+    annotations=_READ_ONLY,
+)
 async def tool_get_project(project_id: str, ctx: Context) -> dict:
     """Get full project details including zones, users, and VM status breakdown."""
     logger.info(f"Getting project: {project_id}")
     return get_project(project_id)
 
 
-@mcp.tool(description="List all IAM users for a GCP project with their roles and VM ownership counts.")
+@mcp.tool(
+    description="List all IAM users for a GCP project with their roles and VM ownership counts.",
+    annotations=_READ_ONLY,
+)
 async def tool_list_users(project_id: str, ctx: Context) -> dict:
     """List users for a project including how many VMs each owns."""
     logger.info(f"Listing users for project: {project_id}")
     return list_users(project_id)
 
 
-@mcp.tool(description="List all zones for a GCP project with VM counts per zone.")
+@mcp.tool(
+    description="List all zones for a GCP project with VM counts per zone.",
+    annotations=_READ_ONLY,
+)
 async def tool_list_zones(project_id: str, ctx: Context) -> dict:
     """List zones with running/stopped/terminated VM counts."""
     logger.info(f"Listing zones for project: {project_id}")
     return list_zones(project_id)
 
 
-@mcp.tool(description="Get detailed summary of a specific zone including all VMs and aggregate metrics.")
+@mcp.tool(
+    description="Get detailed summary of a specific zone including all VMs and aggregate metrics.",
+    annotations=_READ_ONLY,
+)
 async def tool_get_zone_summary(project_id: str, zone: str, ctx: Context) -> dict:
     """Get zone details with VM list and CPU metrics."""
     logger.info(f"Getting zone summary: {project_id}/{zone}")
     return get_zone_summary(project_id, zone)
 
 
-@mcp.tool(description="List VMs in a project with optional filters for zone, status, and owner.")
+@mcp.tool(
+    description="List VMs in a project with optional filters for zone, status, and owner.",
+    annotations=_READ_ONLY,
+)
 async def tool_list_vms(
     project_id: str,
     zone: str = None,
@@ -99,21 +131,30 @@ async def tool_list_vms(
     return list_vms(project_id, zone, status, owner_email)
 
 
-@mcp.tool(description="Get full details of a specific VM including current metrics and recent log count.")
+@mcp.tool(
+    description="Get full details of a specific VM including current metrics and recent log count.",
+    annotations=_READ_ONLY,
+)
 async def tool_get_vm(vm_id: str, ctx: Context) -> dict:
     """Get complete VM information with current CPU/memory/disk values."""
     logger.info(f"Getting VM: {vm_id}")
     return get_vm(vm_id)
 
 
-@mcp.tool(description="Search VMs by name, tags, labels, machine type, or owner email. Requires a valid project_id — call tool_list_projects first if you don't know it.")
+@mcp.tool(
+    description="Search VMs by name, tags, labels, machine type, or owner email. Requires a valid project_id — call tool_list_projects first if you don't know it.",
+    annotations=_READ_ONLY,
+)
 async def tool_search_vms(project_id: str, query: str, ctx: Context) -> dict:
     """Free-text search across VM attributes. Returns matching VMs with match reason."""
     logger.info(f"Searching VMs: project={project_id}, query={query}")
     return search_vms(project_id, query)
 
 
-@mcp.tool(description="Get performance time series data (CPU/memory/disk) for a VM. Returns chart-ready data.")
+@mcp.tool(
+    description="Get performance time series data (CPU/memory/disk) for a VM. Returns chart-ready data.",
+    annotations=_READ_ONLY,
+)
 async def tool_get_vm_performance(
     vm_id: str,
     metric: str = "all",
@@ -125,7 +166,10 @@ async def tool_get_vm_performance(
     return get_vm_performance(vm_id, metric, hours)
 
 
-@mcp.tool(description="Get event logs for a specific VM (START/STOP/RESTART/ERROR events).")
+@mcp.tool(
+    description="Get event logs for a specific VM (START/STOP/RESTART/ERROR events).",
+    annotations=_READ_ONLY,
+)
 async def tool_get_vm_logs(
     vm_id: str,
     hours: int = 24,
@@ -137,7 +181,10 @@ async def tool_get_vm_logs(
     return get_vm_logs(vm_id, hours, event_type)
 
 
-@mcp.tool(description="Get recent events across all VMs in a project. Useful for 'what happened today?' queries.")
+@mcp.tool(
+    description="Get recent events across all VMs in a project. Useful for 'what happened today?' queries.",
+    annotations=_READ_ONLY,
+)
 async def tool_get_recent_events(
     project_id: str,
     hours: int = 24,
@@ -150,14 +197,20 @@ async def tool_get_recent_events(
     return get_recent_events(project_id, hours, event_type, severity)
 
 
-@mcp.tool(description="Get project health status at a glance: VM summary, alerts, zone breakdown, recent stops.")
+@mcp.tool(
+    description="Get project health status at a glance: VM summary, alerts, zone breakdown, recent stops.",
+    annotations=_READ_ONLY,
+)
 async def tool_get_project_health(project_id: str, ctx: Context) -> dict:
     """Primary status dashboard tool. Shows high CPU VMs, errors, and recently stopped VMs."""
     logger.info(f"Getting project health: {project_id}")
     return get_project_health(project_id)
 
 
-@mcp.tool(description="Get VMs exceeding a utilization threshold for CPU, memory, or disk.")
+@mcp.tool(
+    description="Get VMs exceeding a utilization threshold for CPU, memory, or disk.",
+    annotations=_READ_ONLY,
+)
 async def tool_get_high_utilization_vms(
     project_id: str,
     metric: str = "cpu",
@@ -169,7 +222,10 @@ async def tool_get_high_utilization_vms(
     return get_high_utilization_vms(project_id, metric, threshold)
 
 
-@mcp.tool(description="Generate a performance chart for a VM. Always use output_format='png+html' to get both an interactive HTML chart and a PNG snapshot. The vm_id must be the actual VM ID (e.g., 'vm-2a077021'), NOT the VM name — call tool_search_vms first if you only have the name.")
+@mcp.tool(
+    description="Generate a performance chart for a VM. Always use output_format='png+html' to get both an interactive HTML chart and a PNG snapshot. The vm_id must be the actual VM ID (e.g., 'vm-2a077021'), NOT the VM name — call tool_search_vms first if you only have the name.",
+    annotations=_READ_ONLY,
+)
 async def tool_generate_chart(
     vm_id: str,
     metric: str = "cpu",
@@ -264,7 +320,10 @@ async def tool_generate_chart(
         return {"error": f"Chart generation failed: {str(e)[:200]}"}
 
 
-@mcp.tool(description="Generate a multi-panel dashboard comparing multiple metrics or VMs side-by-side. Supports output_format='png+html'.")
+@mcp.tool(
+    description="Generate a multi-panel dashboard comparing multiple metrics or VMs side-by-side. Supports output_format='png+html'.",
+    annotations=_READ_ONLY,
+)
 async def tool_generate_dashboard(
     vm_ids: str = "",
     metrics: str = "cpu,memory",
@@ -437,7 +496,10 @@ mcp_v2 = FastMCP(
 mcp_v2.mount(mcp)
 
 # V2-exclusive tool — compare health across ALL projects in one call
-@mcp_v2.tool(description="Compare health across all GCP projects side by side — VM counts, avg CPU, avg memory, running vs stopped. V2-exclusive tool not available in V1.")
+@mcp_v2.tool(
+    description="Compare health across all GCP projects side by side — VM counts, avg CPU, avg memory, running vs stopped. V2-exclusive tool not available in V1.",
+    annotations=_READ_ONLY,
+)
 async def tool_compare_projects(ctx: Context = None) -> dict:
     """Cross-project health comparison — V2 only.
 
